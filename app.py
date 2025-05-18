@@ -1,7 +1,6 @@
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, EmailStr
 import dns.resolver
-import dns.reversename
 
 app = FastAPI()
 
@@ -79,7 +78,7 @@ def query_dnsbl(ip: str, blacklist: str) -> bool:
     reversed_ip = '.'.join(reversed(ip.split('.')))
     query = f"{reversed_ip}.{blacklist}"
     try:
-        dns.resolver.resolve(query, 'A')
+        dns.resolver.resolve(query, 'A', lifetime=5)
         return True
     except dns.resolver.NXDOMAIN:
         return False
@@ -89,7 +88,7 @@ def query_dnsbl(ip: str, blacklist: str) -> bool:
 def query_domain_dnsbl(domain: str, blacklist: str) -> bool:
     query = f"{domain}.{blacklist}"
     try:
-        dns.resolver.resolve(query, 'A')
+        dns.resolver.resolve(query, 'A', lifetime=5)
         return True
     except dns.resolver.NXDOMAIN:
         return False
@@ -98,52 +97,53 @@ def query_domain_dnsbl(domain: str, blacklist: str) -> bool:
 
 def get_mx_ips(domain: str) -> list:
     try:
-        answers = dns.resolver.resolve(domain, 'MX')
+        answers = dns.resolver.resolve(domain, 'MX', lifetime=5)
         mx_hosts = [r.exchange.to_text(omit_final_dot=True) for r in answers]
         ips = []
         for mx in mx_hosts:
-            a_answers = dns.resolver.resolve(mx, 'A')
-            ips.extend([r.address for r in a_answers])
+            try:
+                a_answers = dns.resolver.resolve(mx, 'A', lifetime=5)
+                ips.extend([r.address for r in a_answers])
+            except Exception:
+                continue
         return ips
     except Exception:
         return []
 
 @app.post("/check_email")
 async def check_email(data: EmailRequest):
-    domain = data.email.split('@')[1]
+    return await perform_check(data.email)
+
+# Optional GET endpoint for browser/Pabbly testing
+@app.get("/check_email")
+async def check_email_get(email: str):
+    return await perform_check(email)
+
+async def perform_check(email: str):
+    domain = email.split('@')[1]
     mx_ips = get_mx_ips(domain)
 
     if not mx_ips:
         raise HTTPException(status_code=400, detail="No MX records found for domain")
 
-    # Create result dictionary
-    results = {}
+    domain_blacklisted = {
+        bl: "LISTED" for bl in DOMAIN_BLACKLISTS if query_domain_dnsbl(domain, bl)
+    }
 
-    # Check domain blacklists
-    domain_results = {}
-    for bl in DOMAIN_BLACKLISTS:
-        status = "Listed" if query_domain_dnsbl(domain, bl) else "Not Listed"
-        domain_results[bl] = status
-    results["domain_blacklists"] = domain_results
-
-    # Check IP blacklists
-    ip_results = {}
+    ip_blacklisted = {}
     for ip in mx_ips:
-        ip_results[ip] = {}
-        for bl in IP_BLACKLISTS:
-            status = "Listed" if query_dnsbl(ip, bl) else "Not Listed"
-            ip_results[ip][bl] = status
-    results["ip_blacklists"] = ip_results
+        blacklisted = {
+            bl: "LISTED" for bl in IP_BLACKLISTS if query_dnsbl(ip, bl)
+        }
+        if blacklisted:
+            ip_blacklisted[ip] = blacklisted
 
-    # Determine if email can be safely sent
-    any_listed = any(status == "Listed" for status in domain_results.values())
-    for ip_bl in ip_results.values():
-        if any(status == "Listed" for status in ip_bl.values()):
-            any_listed = True
-            break
+    can_send_mail = not domain_blacklisted and not ip_blacklisted
 
-    results["can_send_mail"] = not any_listed
-    results["mx_ips"] = mx_ips
-    results["domain"] = domain
-
-    return results
+    return {
+        "domain": domain,
+        "mx_ips": mx_ips,
+        "domain_blacklisted": domain_blacklisted,
+        "ip_blacklisted": ip_blacklisted,
+        "can_send_mail": can_send_mail,
+    }
