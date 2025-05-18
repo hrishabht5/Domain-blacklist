@@ -9,11 +9,67 @@ IP_BLACKLISTS = [
     'zen.spamhaus.org',
     'b.barracudacentral.org',
     'bl.spamcop.net',
+    '0spam.fusionzero.com',
+    'rbl.0spam.org',
+    'black.mail.abusix.zone',
+    'dbl.abusix.zone',
+    'exploit.mail.abusix.zone',
+    'backscatter.spameatingmonkey.net',
+    'blocklist.de',
+    'bogons.cymru.com',
+    'tor.dan.me.uk',
+    'drone.abuse.ch',
+    'dronebl.org',
+    'hil.habeas.com',
+    'hil2.habeas.com',
+    'hostkarma.junkemailfilter.com',
+    'dnsbl.cobion.com',
+    'dnsbl.icm.edu.pl',
+    'dnsbl.imp.ch',
+    'wormbl.imp.ch',
+    'dnsbl.interserver.net',
+    'ivmSIP.dnsbl.info',
+    'ivmSIP24.dnsbl.info',
+    'dnsbl.kempt.net',
+    'bl.mailspike.net',
+    'z.mailspike.net',
+    'phishing.msrbl.net',
+    'spam.msrbl.net',
+    'dnsbl.njabl.org',
+    'unsure.nether.net',
+    'relays.nether.net',
+    'bl.nordspam.com',
+    'bl.nosolicitado.org',
+    'psbl.surriel.com',
+    'dyna.rbl.jp',
+    'noptr.rbl.jp',
+    'spam.rbl.jp',
+    'rbl.jp',
+    's5h.net',
+    'schulte.org',
+    'black.spameatingmonkey.net',
+    'score.senderscore.com',
+    'services.net',
+    'dnsbl.spfbl.net',
+    'rep.suomispam.net',
+    'bl.swining.net',
+    'rbl.triumf.ca',
+    'truncate.gbudb.net',
+    'dnsbl-1.uceprotect.net',
+    'dnsbl-2.uceprotect.net',
+    'dnsbl-3.uceprotect.net',
+    'woodys.njabl.org',
+    'zapbl.net',
 ]
 
 DOMAIN_BLACKLISTS = [
     'dbl.spamhaus.org',
     'multi.surbl.org',
+    'dbl.nordspam.com',
+    'fresh.spameatingmonkey.net',
+    'urired.spameatingmonkey.net',
+    'rhsbl.badconf.rfc-ignorant.org',
+    'rhsbl.nomail.rfc-ignorant.org',
 ]
 
 class EmailRequest(BaseModel):
@@ -55,25 +111,39 @@ def get_mx_ips(domain: str) -> list:
 @app.post("/check_email")
 async def check_email(data: EmailRequest):
     domain = data.email.split('@')[1]
-
     mx_ips = get_mx_ips(domain)
+
     if not mx_ips:
         raise HTTPException(status_code=400, detail="No MX records found for domain")
 
-    domain_blacklisted = [bl for bl in DOMAIN_BLACKLISTS if query_domain_dnsbl(domain, bl)]
+    # Create result dictionary
+    results = {}
 
-    ip_blacklisted = {}
+    # Check domain blacklists
+    domain_results = {}
+    for bl in DOMAIN_BLACKLISTS:
+        status = "Listed" if query_domain_dnsbl(domain, bl) else "Not Listed"
+        domain_results[bl] = status
+    results["domain_blacklists"] = domain_results
+
+    # Check IP blacklists
+    ip_results = {}
     for ip in mx_ips:
-        blacklists = [bl for bl in IP_BLACKLISTS if query_dnsbl(ip, bl)]
-        if blacklists:
-            ip_blacklisted[ip] = blacklists
+        ip_results[ip] = {}
+        for bl in IP_BLACKLISTS:
+            status = "Listed" if query_dnsbl(ip, bl) else "Not Listed"
+            ip_results[ip][bl] = status
+    results["ip_blacklists"] = ip_results
 
-    can_send_mail = not domain_blacklisted and not ip_blacklisted
+    # Determine if email can be safely sent
+    any_listed = any(status == "Listed" for status in domain_results.values())
+    for ip_bl in ip_results.values():
+        if any(status == "Listed" for status in ip_bl.values()):
+            any_listed = True
+            break
 
-    return {
-        "domain": domain,
-        "mx_ips": mx_ips,
-        "domain_blacklisted": domain_blacklisted,
-        "ip_blacklisted": ip_blacklisted,
-        "can_send_mail": can_send_mail,
-    }
+    results["can_send_mail"] = not any_listed
+    results["mx_ips"] = mx_ips
+    results["domain"] = domain
+
+    return results
