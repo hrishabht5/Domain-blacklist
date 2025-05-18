@@ -1,62 +1,79 @@
-# app.py
-from flask import Flask, request, jsonify
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel, EmailStr
 import dns.resolver
-import socket
+import dns.reversename
 
-app = Flask(__name__)
+app = FastAPI()
 
-DNSBL_PROVIDERS = [
-    "zen.spamhaus.org",
-    "bl.spamcop.net",
-    "dnsbl.sorbs.net",
-    "b.barracudacentral.org",
-    "spam.dnsbl.sorbs.net"
+IP_BLACKLISTS = [
+    'zen.spamhaus.org',
+    'b.barracudacentral.org',
+    'bl.spamcop.net',
 ]
 
-def get_mx_ips(domain):
+DOMAIN_BLACKLISTS = [
+    'dbl.spamhaus.org',
+    'multi.surbl.org',
+]
+
+class EmailRequest(BaseModel):
+    email: EmailStr
+
+def query_dnsbl(ip: str, blacklist: str) -> bool:
+    reversed_ip = '.'.join(reversed(ip.split('.')))
+    query = f"{reversed_ip}.{blacklist}"
     try:
-        mx_records = dns.resolver.resolve(domain, 'MX')
-        mx_hosts = [str(r.exchange).rstrip('.') for r in mx_records]
-        mx_ips = []
-        for host in mx_hosts:
-            ip = socket.gethostbyname(host)
-            mx_ips.append(ip)
-        return mx_ips
-    except Exception as e:
+        dns.resolver.resolve(query, 'A')
+        return True
+    except dns.resolver.NXDOMAIN:
+        return False
+    except Exception:
+        return False
+
+def query_domain_dnsbl(domain: str, blacklist: str) -> bool:
+    query = f"{domain}.{blacklist}"
+    try:
+        dns.resolver.resolve(query, 'A')
+        return True
+    except dns.resolver.NXDOMAIN:
+        return False
+    except Exception:
+        return False
+
+def get_mx_ips(domain: str) -> list:
+    try:
+        answers = dns.resolver.resolve(domain, 'MX')
+        mx_hosts = [r.exchange.to_text(omit_final_dot=True) for r in answers]
+        ips = []
+        for mx in mx_hosts:
+            a_answers = dns.resolver.resolve(mx, 'A')
+            ips.extend([r.address for r in a_answers])
+        return ips
+    except Exception:
         return []
 
-def reverse_ip(ip):
-    return '.'.join(reversed(ip.split('.')))
-
-def check_blacklists(ip):
-    results = {}
-    reversed_ip = reverse_ip(ip)
-    for bl in DNSBL_PROVIDERS:
-        query = f"{reversed_ip}.{bl}"
-        try:
-            dns.resolver.resolve(query, 'A')
-            results[bl] = True
-        except dns.resolver.NXDOMAIN:
-            results[bl] = False
-        except:
-            results[bl] = "error"
-    return results
-
-@app.route('/check', methods=['GET'])
-def check_domain():
-    domain = request.args.get('domain')
-    if not domain:
-        return jsonify({"error": "Please provide a domain using ?domain=example.com"}), 400
+@app.post("/check_email")
+async def check_email(data: EmailRequest):
+    domain = data.email.split('@')[1]
 
     mx_ips = get_mx_ips(domain)
     if not mx_ips:
-        return jsonify({"error": "No MX records or IPs found."}), 404
+        raise HTTPException(status_code=400, detail="No MX records found for domain")
 
-    full_result = {}
+    domain_blacklisted = [bl for bl in DOMAIN_BLACKLISTS if query_domain_dnsbl(domain, bl)]
+
+    ip_blacklisted = {}
     for ip in mx_ips:
-        full_result[ip] = check_blacklists(ip)
+        blacklists = [bl for bl in IP_BLACKLISTS if query_dnsbl(ip, bl)]
+        if blacklists:
+            ip_blacklisted[ip] = blacklists
 
-    return jsonify({"domain": domain, "mx_ips": mx_ips, "blacklist_results": full_result})
+    can_send_mail = not domain_blacklisted and not ip_blacklisted
 
-if __name__ == '__main__':
-    app.run(debug=True)
+    return {
+        "domain": domain,
+        "mx_ips": mx_ips,
+        "domain_blacklisted": domain_blacklisted,
+        "ip_blacklisted": ip_blacklisted,
+        "can_send_mail": can_send_mail,
+    }
