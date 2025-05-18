@@ -1,0 +1,55 @@
+from flask import Flask, request, jsonify
+import socket
+import dns.resolver
+
+app = Flask(__name__)
+
+DNSBL_SERVERS = [
+    "zen.spamhaus.org",
+    "bl.spamcop.net",
+    "b.barracudacentral.org",
+    "dnsbl.sorbs.net",
+    "psbl.surriel.com",
+    "ubl.unsubscore.com",
+    "cbl.abuseat.org",
+    "dnsbl-1.uceprotect.net",
+    "dnsbl.dronebl.org"
+]
+
+def reverse_ip(ip_address):
+    return '.'.join(reversed(ip_address.split('.')))
+
+def check_blacklists(ip_address):
+    reversed_ip = reverse_ip(ip_address)
+    results = {}
+
+    for dnsbl in DNSBL_SERVERS:
+        query = f"{reversed_ip}.{dnsbl}"
+        try:
+            dns.resolver.resolve(query, "A")
+            results[dnsbl] = "❌ Listed"
+        except dns.resolver.NXDOMAIN:
+            results[dnsbl] = "✅ Not Listed"
+        except Exception as e:
+            results[dnsbl] = f"⚠️ Error: {str(e)}"
+
+    return results
+
+@app.route("/check", methods=["POST"])
+def check():
+    data = request.get_json()
+    domain = data.get("domain")
+    try:
+        ip = socket.gethostbyname(domain)
+    except:
+        return jsonify({"error": "Invalid domain or IP resolution failed."}), 400
+
+    result = check_blacklists(ip)
+    return jsonify({
+        "domain": domain,
+        "ip": ip,
+        "blacklist_status": result
+    })
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=5000)
