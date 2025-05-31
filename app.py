@@ -1,10 +1,8 @@
+# app.py
 from flask import Flask, request, jsonify
 from selenium import webdriver
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
+from bs4 import BeautifulSoup
 import time
 
 app = Flask(__name__)
@@ -13,47 +11,42 @@ app = Flask(__name__)
 def check_blacklists():
     data = request.get_json()
     domain = data.get("domain")
-
     if not domain:
-        return jsonify({"error": "Missing domain field"}), 400
+        return jsonify({"error": "No domain provided"}), 400
 
-    # Configure Selenium
+    # Configure Selenium with Chromium
     chrome_options = Options()
+    chrome_options.binary_location = "/usr/bin/chromium"
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-
+    driver = webdriver.Chrome(options=chrome_options)
     try:
         driver.get("https://mxtoolbox.com/blacklists.aspx")
+        time.sleep(3)
 
-        search_box = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_ucToolhandler_txtToolInput")
-        search_box.clear()
-        search_box.send_keys(domain)
-        search_box.send_keys(Keys.ENTER)
+        input_box = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_txtToolInput")
+        input_box.clear()
+        input_box.send_keys(domain)
 
-        # Wait for results to load
-        time.sleep(10)  # adjust if needed
+        go_button = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_btnAction")
+        go_button.click()
 
-        rows = driver.find_elements(By.CSS_SELECTOR, ".ToolResultsContainer table tr")
-        results = []
+        time.sleep(10)  # wait for results to load
 
-        for row in rows:
-            columns = row.find_elements(By.TAG_NAME, "td")
-            if len(columns) >= 2:
-                blacklist = columns[0].text.strip()
-                status = columns[1].text.strip()
-                if blacklist:
-                    results.append({"blacklist": blacklist, "status": status})
+        html = driver.page_source
+        soup = BeautifulSoup(html, "html.parser")
 
-        return jsonify({"domain": domain, "blacklist_status": results})
+        table = soup.find("table", {"id": "ctl00_ContentPlaceHolder1_ucToolhandler_pnlToolResult"})
+        result_text = table.get_text(strip=True) if table else "No result table found."
+
+        return jsonify({"domain": domain, "result": result_text})
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-
     finally:
         driver.quit()
 
 if __name__ == "__main__":
-    app.run(debug=True, host="0.0.0.0", port=5000)
+    app.run(host="0.0.0.0", port=10000)
