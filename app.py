@@ -13,7 +13,6 @@ def index():
 
 @app.route("/check", methods=["POST"])
 def check_blacklists():
-    driver = None
     try:
         data = request.get_json()
         domain = data.get("domain")
@@ -25,13 +24,11 @@ def check_blacklists():
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
 
-        # Use the geckodriver path installed via Dockerfile
-        service = Service("/usr/local/bin/geckodriver")
-
+        service = Service("/usr/bin/geckodriver")
         driver = webdriver.Firefox(service=service, options=options)
 
         driver.get("https://mxtoolbox.com/blacklists.aspx")
-        time.sleep(3)
+        time.sleep(5)
 
         input_box = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_txtToolInput")
         input_box.clear()
@@ -40,7 +37,7 @@ def check_blacklists():
         search_button = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_btnAction")
         search_button.click()
 
-        time.sleep(10)  # wait for results to load
+        time.sleep(12)
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         results_table = soup.find("table", id="ctl00_ContentPlaceHolder1_gridResults")
@@ -64,5 +61,7 @@ def check_blacklists():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        if driver:
+        try:
             driver.quit()
+        except:
+            pass
