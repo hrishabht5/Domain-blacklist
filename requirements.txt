@@ -1,6 +1,4 @@
-fastapi
-uvicorn
-dnspython
-pydantic
+flask
+selenium
 gunicorn
-email-validator
+webdriver-manager
