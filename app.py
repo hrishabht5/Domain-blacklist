@@ -24,9 +24,9 @@ def check_blacklists():
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.binary_location = "/usr/bin/firefox-esr"  # Explicit Firefox binary path
 
-        service = Service("/usr/bin/geckodriver")
+        # Use the geckodriver path installed via Dockerfile
+        service = Service("/usr/local/bin/geckodriver")
 
         driver = webdriver.Firefox(service=service, options=options)
 
@@ -66,15 +66,3 @@ def check_blacklists():
     finally:
         if driver:
             driver.quit()
-
-
-# Optional debug route to verify binaries are installed
-import subprocess
-@app.route('/debug')
-def debug():
-    gecko_path = subprocess.run(['which', 'geckodriver'], capture_output=True, text=True).stdout.strip()
-    firefox_path = subprocess.run(['which', 'firefox-esr'], capture_output=True, text=True).stdout.strip()
-    return {
-        "geckodriver": gecko_path or "Not found",
-        "firefox-esr": firefox_path or "Not found"
-    }
