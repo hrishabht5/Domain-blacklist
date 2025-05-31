@@ -4,7 +4,6 @@ from selenium.webdriver.firefox.options import Options
 from selenium.webdriver.firefox.service import Service
 from bs4 import BeautifulSoup
 import time
-import os
 
 app = Flask(__name__)
 
@@ -14,6 +13,7 @@ def index():
 
 @app.route("/check", methods=["POST"])
 def check_blacklists():
+    driver = None
     try:
         data = request.get_json()
         domain = data.get("domain")
@@ -24,8 +24,9 @@ def check_blacklists():
         options.add_argument("--headless")
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
+        options.binary_location = "/usr/bin/firefox-esr"  # Explicit Firefox binary path
 
-        service = Service("/usr/bin/geckodriver")  # path for Geckodriver in Render
+        service = Service("/usr/bin/geckodriver")
 
         driver = webdriver.Firefox(service=service, options=options)
 
@@ -46,7 +47,6 @@ def check_blacklists():
         if not results_table:
             return jsonify({"error": "Could not find results table. Check domain or try again."}), 500
 
-        # Optional: parse rows for cleaner output
         results = []
         for row in results_table.find_all("tr")[1:]:
             cols = row.find_all("td")
@@ -64,7 +64,17 @@ def check_blacklists():
         return jsonify({"error": str(e)}), 500
 
     finally:
-        try:
+        if driver:
             driver.quit()
-        except:
-            pass
+
+
+# Optional debug route to verify binaries are installed
+import subprocess
+@app.route('/debug')
+def debug():
+    gecko_path = subprocess.run(['which', 'geckodriver'], capture_output=True, text=True).stdout.strip()
+    firefox_path = subprocess.run(['which', 'firefox-esr'], capture_output=True, text=True).stdout.strip()
+    return {
+        "geckodriver": gecko_path or "Not found",
+        "firefox-esr": firefox_path or "Not found"
+    }
