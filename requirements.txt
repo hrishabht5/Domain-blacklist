@@ -1,5 +1,4 @@
-Flask
-gunicorn
+flask
 selenium
-webdriver-manager
+gunicorn
 beautifulsoup4
