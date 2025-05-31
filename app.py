@@ -1,86 +1,59 @@
-from fastapi import FastAPI, HTTPException, Query
-import dns.resolver
+from flask import Flask, request, jsonify
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from webdriver_manager.chrome import ChromeDriverManager
+import time
 
-app = FastAPI()
+app = Flask(__name__)
 
-IP_BLACKLISTS = [
-    'zen.spamhaus.org',
-    'bl.spamcop.net',
-    'b.barracudacentral.org',
-    'psbl.surriel.com',
-    'dnsbl-1.uceprotect.net',
-]
+@app.route("/check", methods=["POST"])
+def check_blacklists():
+    data = request.get_json()
+    domain = data.get("domain")
 
-DOMAIN_BLACKLISTS = [
-    'dbl.spamhaus.org',
-    'multi.surbl.org',
-]
+    if not domain:
+        return jsonify({"error": "Missing domain field"}), 400
 
-def query_dnsbl(ip: str, blacklist: str) -> str:
-    reversed_ip = '.'.join(reversed(ip.split('.')))
-    query = f"{reversed_ip}.{blacklist}"
+    # Configure Selenium
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--disable-dev-shm-usage")
+
+    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
+
     try:
-        dns.resolver.resolve(query, 'A', lifetime=2)
-        return "listed"
-    except dns.resolver.NXDOMAIN:
-        return "not listed"
-    except Exception:
-        return "error"
+        driver.get("https://mxtoolbox.com/blacklists.aspx")
 
-def query_domain_dnsbl(domain: str, blacklist: str) -> str:
-    query = f"{domain}.{blacklist}"
-    try:
-        dns.resolver.resolve(query, 'A', lifetime=2)
-        return "listed"
-    except dns.resolver.NXDOMAIN:
-        return "not listed"
-    except Exception:
-        return "error"
+        search_box = driver.find_element(By.ID, "ctl00_ContentPlaceHolder1_ucToolhandler_txtToolInput")
+        search_box.clear()
+        search_box.send_keys(domain)
+        search_box.send_keys(Keys.ENTER)
 
-def get_mx_ips(domain: str) -> list:
-    try:
-        answers = dns.resolver.resolve(domain, 'MX', lifetime=2)
-        mx_hosts = [r.exchange.to_text(omit_final_dot=True) for r in answers]
-        ips = []
-        for mx in mx_hosts:
-            a_answers = dns.resolver.resolve(mx, 'A', lifetime=2)
-            ips.extend([r.address for r in a_answers])
-        return ips
-    except Exception:
-        return []
+        # Wait for results to load
+        time.sleep(10)  # adjust if needed
 
-@app.get("/check_email")
-async def check_email(email: str = Query(..., description="Email address to check")):
-    if "@" not in email:
-        raise HTTPException(status_code=400, detail="Invalid email format")
+        rows = driver.find_elements(By.CSS_SELECTOR, ".ToolResultsContainer table tr")
+        results = []
 
-    domain = email.split('@')[1]
+        for row in rows:
+            columns = row.find_elements(By.TAG_NAME, "td")
+            if len(columns) >= 2:
+                blacklist = columns[0].text.strip()
+                status = columns[1].text.strip()
+                if blacklist:
+                    results.append({"blacklist": blacklist, "status": status})
 
-    mx_ips = get_mx_ips(domain)
-    if not mx_ips:
-        raise HTTPException(status_code=400, detail="No MX records found for domain")
+        return jsonify({"domain": domain, "blacklist_status": results})
 
-    # Check domain blacklists, map blacklist name to status string
-    domain_blacklisted = {
-        bl: query_domain_dnsbl(domain, bl) for bl in DOMAIN_BLACKLISTS
-    }
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
-    # Check each IP against IP blacklists, map IP to a dict of blacklist name → status string
-    ip_blacklisted = {}
-    for ip in mx_ips:
-        ip_statuses = {bl: query_dnsbl(ip, bl) for bl in IP_BLACKLISTS}
-        ip_blacklisted[ip] = ip_statuses
+    finally:
+        driver.quit()
 
-    # Overall mail send ability: False if any blacklist is 'listed'
-    can_send_mail = not (
-        any(status == "listed" for status in domain_blacklisted.values()) or
-        any(status == "listed" for ip_bl in ip_blacklisted.values() for status in ip_bl.values())
-    )
-
-    return {
-        "domain": domain,
-        "mx_ips": mx_ips,
-        "domain_blacklisted": domain_blacklisted,
-        "ip_blacklisted": ip_blacklisted,
-        "can_send_mail": can_send_mail,
-    }
+if __name__ == "__main__":
+    app.run(debug=True, host="0.0.0.0", port=5000)
