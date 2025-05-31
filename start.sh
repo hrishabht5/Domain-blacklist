@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Install Firefox ESR and Geckodriver at runtime
+# Runtime install of Firefox and Geckodriver
 apt-get update
 apt-get install -y firefox-esr wget tar
 
@@ -10,6 +10,5 @@ mv geckodriver /usr/bin/geckodriver
 chmod +x /usr/bin/geckodriver
 rm geckodriver-linux64.tar.gz
 
-# Start the Flask app with Gunicorn
+# Start app
 gunicorn app:app --bind 0.0.0.0:10000
-
