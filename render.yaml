@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: domain-blacklist-api
-    env: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: ./start.sh
-    envVars:
-      - key: PYTHONUNBUFFERED
-        value: "TRUE"
