@@ -28,7 +28,7 @@ def check_blacklists():
         driver = webdriver.Firefox(service=service, options=options)
 
         driver.get("https://mxtoolbox.com/blacklists.aspx")
-        time.sleep(5)
+        time.sleep(3)
 
         input_box = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_txtToolInput")
         input_box.clear()
@@ -37,7 +37,7 @@ def check_blacklists():
         search_button = driver.find_element("id", "ctl00_ContentPlaceHolder1_ucToolhandler_btnAction")
         search_button.click()
 
-        time.sleep(12)
+        time.sleep(10)
 
         soup = BeautifulSoup(driver.page_source, "html.parser")
         results_table = soup.find("table", id="ctl00_ContentPlaceHolder1_gridResults")
@@ -65,3 +65,6 @@ def check_blacklists():
             driver.quit()
         except:
             pass
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=3000)
